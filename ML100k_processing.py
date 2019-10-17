@@ -1,4 +1,5 @@
 import numpy as np
+from collections import OrderedDict
 
 ml_100k = '/home/mondaym/PycharmProjects/ARLMR/dataset/ml-100k'
 
@@ -129,6 +130,12 @@ class PMF(object):
             self.batch_size = parameters.get("batch_size", 1000)
 
 
+def to_reward(rating):
+    if rating == 4 or rating == 5:
+        return 1
+    return -1
+
+
 def load_rating_seq(file_path=ml_100k + '/u.data'):
     sequential_history = dict()  # {user: (item, reward)}
     all_rating = []
@@ -139,7 +146,7 @@ def load_rating_seq(file_path=ml_100k + '/u.data'):
             all_rating.append(line)
         all_rating.sort(key=lambda x: x[-1])
         for record in all_rating:
-            sequential_history.setdefault(record[0], []).append(tuple([record[1], (record[2]-3)/2]))
+            sequential_history.setdefault(record[0], OrderedDict())[record[1]] = to_reward(record[2])
     return sequential_history
 
 
