@@ -8,6 +8,7 @@ Creating a environment in recommendation systems.
 
 from ML100k_processing import PMF
 from ML100k_processing import load_rating_data, load_rating_seq
+from sklearn.metrics import roc_auc_score
 import numpy as np
 import random
 
@@ -82,7 +83,10 @@ class Environment(object):
         :param items: item id.
         :return: Current state.
         """
-        item_features = [self.item_features[item] for item in items]
+        if not items:
+            item_features = [[0.0 for _ in range(self.action_len)]]
+        else:
+            item_features = [self.item_features[item] for item in items]
         item_ave = np.mean(item_features, axis=0)
         state = np.concatenate([self.user_features[user],
                                 np.multiply(self.user_features[user], item_ave),
@@ -114,8 +118,8 @@ class Environment(object):
         while self.user_id in self.bad_user:
             self.user_id = random.choice(range(1, 944))
         items = self.user_history[self.user_id]
-        state = self.state_encode(self.user_id, items)
-        return state
+        self.state = self.state_encode(self.user_id, items)
+        return self.state
 
     def step(self, action):
         """
@@ -140,8 +144,15 @@ class Environment(object):
         end = not bool(candidates)
         return state, reward, end, info
 
+    def auc(self, user, action):
+        candidate_mat = [self.item_features[k] for k in self.user_record[user].keys()]
+        labels = [1 if v > 0 else 0 for v in self.user_record[user].values()]
+        ratings = list(np.matmul(candidate_mat, np.transpose(action)))
+        p = list(map(lambda x: 1 / (1 + np.e ** (-x)), ratings))
+        return roc_auc_score(labels, p)
+
 
 if __name__ == '__main__':
     env = Environment()
-    s0 = env.reset()
-    s, r, end, info = env.step(env.user_features[env.user_id])
+    # s0 = env.reset()
+    # s, r, end, info = env.step(env.user_features[env.user_id])

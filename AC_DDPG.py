@@ -217,8 +217,8 @@ if __name__ == '__main__':
 
     memory = Memory(2000, 2*N_S + N_A + 1)
     reward_list = []
+    auc = []
     # For each user, recommendation agent take a few action.
-    #
     for epoch in range(MAX_EPOCH):
         env.reset()
         reward = 0  # Sum reward for each epoch.
@@ -239,14 +239,28 @@ if __name__ == '__main__':
                 target_q = b_r + GAMMA * q_
                 train_AC.train(target_q, s=b_s)
                 target_AC.set_params(train_AC.a_params, train_AC.c_params, t=0.4)
+        user_auc = 0
+        for user in range(1, 944):
+            items = env._find_latest_positive_history(env.user_record[user], env.user_history[user])
+            s = env.state_encode(user, items)
+            a = train_AC.get_action(s)
+            try:
+                user_auc += env.auc(user, a)
+            except ValueError:
+                user_auc += 1
+        auc.append(user_auc / 943)
         reward_list.append(reward)
-        print('epoch {} finished with reward {}'.format(epoch, reward))
-    average_reward_list = []
-    for i in range(len(reward_list)):
-        average_reward_list.append(np.mean(reward_list[:i+1]))
-    plt.plot(np.arange(MAX_EPOCH), average_reward_list)
-    plt.xlabel('step')
-    plt.ylabel('Average reward')
+        print('epoch {} finished with reward {}, auc {}'.format(epoch, reward, user_auc / 943))
+    with open('./one_user_per_epoch.txt', 'w') as f:
+        f.write('{}\n{}\n{}\n'.format(list(range(MAX_EPOCH)), reward_list, auc))
+    plt.subplot(1, 2, 1)
+    plt.plot(np.arange(MAX_EPOCH), reward_list)
+    plt.xlabel('epoch')
+    plt.ylabel('reward')
+    plt.subplot(1, 2, 2)
+    plt.plot(np.arange(MAX_EPOCH), auc)
+    plt.xlabel('epoch')
+    plt.ylabel('auc')
     plt.show()
     saver.save(SESS, "/home/mondaym/PycharmProjects/AC_Rec/AC.ckpt")
     SESS.close()

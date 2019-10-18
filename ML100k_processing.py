@@ -133,6 +133,8 @@ class PMF(object):
 def to_reward(rating):
     if rating == 4 or rating == 5:
         return 1
+    if rating == 3:
+        return 0
     return -1
 
 
