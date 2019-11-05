@@ -1,30 +1,16 @@
 import numpy as np
 from collections import OrderedDict
+import tensorflow as tf
+import IPython.display as display
 
-ml_100k = '/home/mondaym/PycharmProjects/ARLMR/dataset/ml-100k'
 
 
-def load_rating_data(file_path=ml_100k + '/u.data'):
-    """
-    load movie lens 100k ratings from original rating file.
-    need to download and put rating data in /data folder first.
-    Source: http://www.grouplens.org/
-
-    :return numpy array formed like [user id, movie id, rating]
-    """
-    prefer = []
-    for line in open(file_path, 'r'):  # 打开指定文件
-        (userid, movieid, rating, ts) = line.split('\t')  # 数据集中每行有4项
-        uid = int(userid)
-        mid = int(movieid)
-        rat = float(rating)
-        prefer.append([uid, mid, rat])
-    data = np.array(prefer)
-    return data
+ml_100k = './dataset/ml-100k'
+FEAT_LEN = 100
 
 
 class PMF(object):
-    def __init__(self, num_feat=100, epsilon=1, _lambda=0.1, momentum=0.8, maxepoch=10, num_batches=100, batch_size=1000):
+    def __init__(self, num_feat=FEAT_LEN, epsilon=1, _lambda=0.1, momentum=0.8, maxepoch=10, num_batches=100, batch_size=1000):
         self.num_feat = num_feat  # Number of latent features,
         self.epsilon = epsilon  # learning rate,
         self._lambda = _lambda  # L2 regularization,
@@ -130,6 +116,25 @@ class PMF(object):
             self.batch_size = parameters.get("batch_size", 1000)
 
 
+def load_rating_data(file_path=ml_100k + '/u.data'):
+    """
+    load movie lens 100k ratings from original rating file.
+    need to download and put rating data in /data folder first.
+    Source: http://www.grouplens.org/
+
+    :return numpy array formed like [user id, movie id, rating]
+    """
+    prefer = []
+    for line in open(file_path, 'r'):  # 打开指定文件
+        (userid, movieid, rating, ts) = line.split('\t')  # 数据集中每行有4项
+        uid = int(userid)
+        mid = int(movieid)
+        rat = float(rating)
+        prefer.append([uid, mid, rat])
+    data = np.array(prefer)
+    return data
+
+
 def to_reward(rating):
     if rating == 4 or rating == 5:
         return 1
@@ -138,8 +143,8 @@ def to_reward(rating):
     return -1
 
 
-def load_rating_seq(file_path=ml_100k + '/u.data'):
-    sequential_history = dict()  # {user: (item, reward)}
+def load_reward_seq(file_path=ml_100k + '/u.data'):
+    sequential_history = dict()  # {user: {item: reward}}
     all_rating = []
     with open(file_path) as f:
         for line in f:
@@ -152,7 +157,150 @@ def load_rating_seq(file_path=ml_100k + '/u.data'):
     return sequential_history
 
 
+# 生成器，用来产生tf.data.Dataset
+def get_train_data(data):
+    """
+    将dict形式的输入数据，通过一系列操作变换成输入模型的数据形式。
+    :param data: {user: {item: label}}
+    :return: [[user_id], [positive_items], [last_item], [label]]
+    """
+    for user in data:
+        item, reward = data[user].popitem()
+        label = 1
+        if reward != 1:
+            label = 0
+        items = [item for item in data[user] if data[user][item] > 0]
+        if not items:
+            items = [0]
+        yield user, items, item, label
+
+
+def get_test_data(data):
+    train_data, test_data = data
+    for user in train_data:
+        history_items = [item for item in train_data[user] if train_data[user][item] > 0]
+        candidates, labels = [], []
+        for key, value in test_data[user].items():
+            candidates.append(key)
+            if value != 1:
+                value = 0
+            labels.append(value)
+        yield user, history_items, candidates, labels
+
+
+
+def data_split(ratio, record):
+    """
+    将dict类型的用户反馈数据按照时间和ratio划分成若干份。
+
+    :param ratio: 划分的比例。
+    :param record: 最开始的所有用户评分记录。形如 {user: {item: label}}
+    :return: 划分后的n份用户评分记录。
+    """
+    n = len(ratio)
+    gates = [sum(ratio[:i+1]) for i in range(n)]
+    parts = [{} for _ in range(n)]
+    for user in record:
+        l = len(record[user])
+        i = 0
+        part = 0
+        for item in record[user]:
+            if i / l > gates[part]:
+                part += 1
+            parts[part].setdefault(user, OrderedDict())[item] = record[user][item]
+            i += 1
+    return parts
+
+
+def to_TFRecord(data, name, filename):
+    """
+    把训练数据和测试数据转换成TFRecord文件的形式。
+    :param data: 如果是训练数据，则只需要训练集的data;如果是测试数据，那么是（训练数据，测试数据）
+    :param name: 标示是生成训练数据还是测试数据。
+    :return: 什么都不返回，在文件根目录下留下一个TFRecord的文件。
+    """
+    if name == 'train':
+        it = get_train_data
+    elif name == 'test':
+        it = get_test_data
+    else:
+        raise ValueError('name参数是train或者test')
+    with tf.python_io.TFRecordWriter(filename) as writer:
+        for user_id, positive_items, last_item, label in it(data):
+            features = {}
+            features['user_id'] = tf.train.Feature(int64_list=tf.train.Int64List(value=[user_id]))
+            features['positive_items'] = tf.train.Feature(int64_list=tf.train.Int64List(value=positive_items))
+            if name == 'train':
+                features['last_item'] = tf.train.Feature(int64_list=tf.train.Int64List(value=[last_item]))
+                features['label'] = tf.train.Feature(int64_list=tf.train.Int64List(value=[label]))
+            elif name == 'test':
+                features['candidates'] = tf.train.Feature(int64_list=tf.train.Int64List(value=last_item))
+                features['labels'] = tf.train.Feature(int64_list=tf.train.Int64List(value=label))
+            example = tf.train.Example(features=tf.train.Features(feature=features))
+            writer.write(example.SerializeToString())
+
+
+def parse_train(serial):
+    feature_description = {
+        'user_id': tf.FixedLenFeature(dtype=tf.int64, shape=[]),
+        'positive_items': tf.VarLenFeature(dtype=tf.int64),
+        'last_item': tf.FixedLenFeature(dtype=tf.int64, shape=[]),
+        'label': tf.FixedLenFeature(dtype=tf.int64, shape=[])
+    }
+    feats = tf.parse_single_example(serial, feature_description)
+    user_id = feats['user_id']
+    history_items = tf.sparse_tensor_to_dense(feats['positive_items'])
+    item = feats['last_item']
+    label = feats['label']
+    return user_id, history_items, item, label
+
+
+def parse_test(serial):
+    feature_description = {
+        'user_id': tf.FixedLenFeature(dtype=tf.int64, shape=[]),
+        'positive_items': tf.VarLenFeature(dtype=tf.int64),
+        'candidates': tf.VarLenFeature(dtype=tf.int64),
+        'labels': tf.VarLenFeature(dtype=tf.int64)
+    }
+    feats = tf.parse_single_example(serial, feature_description)
+    user_id = feats['user_id']
+    history_items = tf.sparse_tensor_to_dense(feats['positive_items'])
+    item = tf.sparse_tensor_to_dense(feats['candidates'])
+    label = tf.sparse_tensor_to_dense(feats['labels'])
+    return user_id, history_items, item, label
+
+
 if __name__ == '__main__':
     # pmf = PMF()
-    # pmf.fit(load_rating_data("./ml-100k/u.data"))
-    print(load_rating_seq()[1])
+    # pmf.fit(load_rating_data(ml_100k + '/u.data'))
+
+    # print(load_rating_seq()[1])
+
+    # 允许tensor不在图内跑
+    tf.enable_eager_execution()
+
+    # 生成训练时的TFRecord
+    # data = load_reward_seq()
+    # train_data, test_data = data_split([0.7, 0.3], data)
+    # to_TFRecord(data, name='train', filename='train.tfr')
+    # to_TFRecord((train_data, test_data), name='test', filename='test.tfr')
+
+    # 解析训练时的TFRecord
+    filenames = ['test.tfr']
+    raw_dataset = tf.data.TFRecordDataset(filenames=filenames)
+    parsed_dataset = raw_dataset.map(parse_test)
+    batch = parsed_dataset.shuffle(100).padded_batch(1, padded_shapes=([], [None], [None], [None]))
+    for item in batch:
+        print(np.shape(item[0]))
+        print(np.shape(item[1]))
+        print(np.shape(item[2]))
+        print(np.shape(item[3]))
+
+
+
+
+
+
+
+
+

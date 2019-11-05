@@ -215,7 +215,7 @@ if __name__ == '__main__':
     saver = tf.train.Saver()
     SESS.run(tf.global_variables_initializer())
 
-    memory = Memory(2000, 2*N_S + N_A + 1)
+    memory = Memory(5000, 2*N_S + N_A + 1)
     reward_list = []
     auc = []
     # For each user, recommendation agent take a few action.
@@ -241,7 +241,7 @@ if __name__ == '__main__':
                 target_AC.set_params(train_AC.a_params, train_AC.c_params, t=0.4)
         user_auc = 0
         for user in range(1, 944):
-            items = env._find_latest_positive_history(env.user_record[user], env.user_history[user])
+            items = env._find_latest_positive_history(user)
             s = env.state_encode(user, items)
             a = train_AC.get_action(s)
             try:

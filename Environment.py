@@ -7,7 +7,7 @@ Creating a environment in recommendation systems.
 """
 
 from ML100k_processing import PMF
-from ML100k_processing import load_rating_data, load_rating_seq
+from ML100k_processing import load_rating_data, load_reward_seq
 from sklearn.metrics import roc_auc_score
 import numpy as np
 import random
@@ -17,29 +17,29 @@ ml_100k = '/home/mondaym/PycharmProjects/ARLMR/dataset/ml-100k'
 
 class Environment(object):
     """
-    Environment(one user) of recommendation Agent.
+    给推荐系统提供状态和动作状态转移关系。
+    状态编码： S = f(用户表示， 历史最近n个正项目) = 用户表示 + 用户表示 × 历史最近5个正项目平均 + 历史最近5个正项目平均
+    P(s_t+1 | s_t, a_t)： 候选电影与输出动作内积得到评分，进而排序取第一个推荐结果，得到用户的反馈，若为正项目，加到历史中，状态变化，否则状态不变。
     """
     def __init__(self):
         self.state_len = 300
         self.action_len = 100
         self.state_window_size = 5
         self.user_id = 0
-        self.bad_user = []
+        self.bad_user = []   # 没有正评价的消极用户
         pmf = PMF()
         pmf.fit(load_rating_data(ml_100k + '/u.data'))
         print('training complete...')
-        self.user_features = pmf.w_User
-        self.item_features = pmf.w_Item
-        self.user_record = load_rating_seq()  # {user: {item, reward}}
-        self.user_history = {k: v for k, v in zip(range(1, 944), self._init_positive_history())}
-
+        self.user_features = pmf.w_User  # 预训练用户表示， 100维
+        self.item_features = pmf.w_Item  # 预训练电影表示， 100维
+        self.user_record = load_reward_seq()  # 用户日志： 形如{user: {item, reward}}
+        self.user_history = {k: v for k, v in zip(range(1, 944), self._init_positive_history())}  # 所有用户的历史观影记录，形如{user: [movie_ids]}
 
     def _init_positive_history(self):
         """
-        Find the initial N(self.state_window_size) positive items as initial history of each user.
-        If positive item in the record less than N, raise RuntimeError.
+        选取用户日志中的最初n个正项目，初始化每个用户的历史。
 
-        :return: Initial positive items of this user.
+        :yield: 每个用户的初始历史
         """
         for user in range(1, 944):
             history = []
@@ -54,34 +54,32 @@ class Environment(object):
                 yield history
         return None
 
-    @staticmethod
-    def _find_latest_positive_history(record, history):
+    def _find_latest_positive_history(self, user_id):
         """
-        :param record: Record of current user.
-        :param history: History of current user.
-        :return: latest N positive history.
+        :param record: 用户日志。class OrderedDict: {item: reward}.
+        :param history: 当前用户此刻的所有历史。
+        :return: 当前用户此刻的最近5个正历史，如果不足的话，把所有的正历史都算上。
         """
+        record, history = self.user_record[user_id], self.user_history[user_id]
         positive_history = [item for item in history if record[item] == 1]
         if len(positive_history) <= 5:
             return positive_history
         return [item for item in history if record[item] == 1][-5:]
 
-    @staticmethod
-    def _find_candidate(record, history):
+    def _find_candidate(self, user):
         """
-        :param record: Record of current user.
-        :param history: History of current user.
-        :return: Candidates for current user.
+        :param user: 当前用户id。
+        :return: 候选电影 = 用户日志中的电影 - 已被推荐过的电影
         """
-        return [item for item in record if item not in history]
+        return [item for item in self.user_record[user] if item not in self.user_history[user]]
 
     def state_encode(self, user, items):
         """
-        Given user and history items, encode it to state.
+        S = f(用户表示， 历史最近n个正项目) = 用户表示 + 用户表示 × 历史最近5个正项目平均 + 历史最近5个正项目平均
 
-        :param user: User id.
-        :param items: item id.
-        :return: Current state.
+        :param user: 用户id。
+        :param items: 电影 id。
+        :return: 当前状态编码。
         """
         if not items:
             item_features = [[0.0 for _ in range(self.action_len)]]
@@ -93,60 +91,62 @@ class Environment(object):
                                 item_ave], axis=0)
         return state
 
-    @staticmethod
-    def get_reward(record, item):
+    def get_reward(self, user, item):
         """
-        Compute reward based on recommended item.
-        :param item: Recommended item.
-        :return: Reward value.
+        :param user: 当前用户。
+        :param item: 被推荐的电影。
+        :return: 得到的奖励。
         """
-        return record[item]
+        return self.user_record[user][item]
 
     def reset(self):
         """
-        Initial state.
+        随机选取一个用户作为训练用户。
+        初始化所有用户的历史。
 
-        Compute each user's state, candidates, and positive items
-
-        Random choose a user.
-        Select the initial n positive items as initial state and remove from candidates.
-
-        :return: Initial state
+        :return: 被选择用户的初始状态编码。
         """
         # random choose a user, and return the initial state.
         self.user_id = random.choice(range(1, 944))
         while self.user_id in self.bad_user:
             self.user_id = random.choice(range(1, 944))
+        self.user_history = {k: v for k, v in zip(range(1, 944), self._init_positive_history())}
         items = self.user_history[self.user_id]
         self.state = self.state_encode(self.user_id, items)
         return self.state
 
     def step(self, action):
         """
-        Take an action, get into a new state, get a reward.
+        对当前用户做出推荐，用户到达新状态，并得到奖励。
 
-        :param action: Action.
-        :return: Current state, reward, end flag, information.
+        :param action: 动作向量，根据此做出推荐。
+        :return: 下一步状态, 奖励, 是否结束, 日志记录.
         """
-        # recommend an item from user record.
-        candidates = self._find_candidate(self.user_record[self.user_id], self.user_history[self.user_id])
+        candidates = self._find_candidate(self.user_id)
         candidate_mat = [self.item_features[i] for i in candidates]
         ratings = list(np.matmul(candidate_mat, np.transpose(action)))
         recommend_item = candidates[ratings.index(max(ratings))]
-        reward = self.get_reward(self.user_record[self.user_id], recommend_item)
+        reward = self.get_reward(self.user_id, recommend_item)
         if reward > 0:
             self.user_history[self.user_id].append(recommend_item)
             info = 'recommendation success'
         else:
             info = 'recommendation fail'
-        pos_items = self._find_latest_positive_history(self.user_record[self.user_id], self.user_history[self.user_id])
+        pos_items = self._find_latest_positive_history(self.user_id)
         state = self.state_encode(self.user_id, pos_items)
         end = not bool(candidates)
         return state, reward, end, info
 
     def auc(self, user, action):
-        candidate_mat = [self.item_features[k] for k in self.user_record[user].keys()]
-        labels = [1 if v > 0 else 0 for v in self.user_record[user].values()]
+        """
+        计算如果对一个user做出action，该user的auc是多少。
+        :param user: 用户id。
+        :param action: 对该用户做出的动作。
+        :return: 该用户的auc。
+        """
+        candidate = self._find_candidate(user)
+        candidate_mat = [self.item_features[i] for i in candidate]
+        labels = [1 if self.user_record[user][i] > 0 else 0 for i in candidate]
         ratings = list(np.matmul(candidate_mat, np.transpose(action)))
         p = list(map(lambda x: 1 / (1 + np.e ** (-x)), ratings))
         return roc_auc_score(labels, p)
