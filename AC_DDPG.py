@@ -18,7 +18,7 @@ import random
 
 
 
-MAX_STEP = 25  # max step in one epoch.80% people have positive items over 42,90% people have positive item over 25
+MAX_STEP = 25  # max step in one epoch 80% people have positive items over 42,90% people have positive item over 25
 MAX_EPOCH = 100   # max epoch number
 BATCH_SIZE = 64
 STATE_WINDOW_SIZE = 5

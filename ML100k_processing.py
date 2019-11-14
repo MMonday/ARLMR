@@ -1,5 +1,6 @@
 import numpy as np
 from collections import OrderedDict
+import pickle as pkl
 import tensorflow as tf
 import IPython.display as display
 
@@ -164,6 +165,7 @@ def get_train_data(data):
     :param data: {user: {item: label}}
     :return: [[user_id], [positive_items], [last_item], [label]]
     """
+    train_user, train_history, train_item, train_label = [], [], [], []
     for user in data:
         item, reward = data[user].popitem()
         label = 1
@@ -172,10 +174,15 @@ def get_train_data(data):
         items = [item for item in data[user] if data[user][item] > 0]
         if not items:
             items = [0]
-        yield user, items, item, label
+        train_user.append([user])
+        train_history.append(items)
+        train_item.append([item])
+        train_label.append([label])
+    return train_user, train_history, train_item, train_label
 
 
 def get_test_data(data):
+    test_user, test_history, test_item, test_label = [], [], [], []
     train_data, test_data = data
     for user in train_data:
         history_items = [item for item in train_data[user] if train_data[user][item] > 0]
@@ -185,9 +192,11 @@ def get_test_data(data):
             if value != 1:
                 value = 0
             labels.append(value)
-        yield user, history_items, candidates, labels
-
-
+        test_user.append([user])
+        test_history.append(history_items)
+        test_item.append(candidates)
+        test_label.append(labels)
+    return test_user, test_history, test_item, test_label
 
 def data_split(ratio, record):
     """
@@ -212,89 +221,39 @@ def data_split(ratio, record):
     return parts
 
 
-def to_TFRecord(data, name, filename):
-    """
-    把训练数据和测试数据转换成TFRecord文件的形式。
-    :param data: 如果是训练数据，则只需要训练集的data;如果是测试数据，那么是（训练数据，测试数据）
-    :param name: 标示是生成训练数据还是测试数据。
-    :return: 什么都不返回，在文件根目录下留下一个TFRecord的文件。
-    """
-    if name == 'train':
-        it = get_train_data
-    elif name == 'test':
-        it = get_test_data
-    else:
-        raise ValueError('name参数是train或者test')
-    with tf.python_io.TFRecordWriter(filename) as writer:
-        for user_id, positive_items, last_item, label in it(data):
-            features = {}
-            features['user_id'] = tf.train.Feature(int64_list=tf.train.Int64List(value=[user_id]))
-            features['positive_items'] = tf.train.Feature(int64_list=tf.train.Int64List(value=positive_items))
-            if name == 'train':
-                features['last_item'] = tf.train.Feature(int64_list=tf.train.Int64List(value=[last_item]))
-                features['label'] = tf.train.Feature(int64_list=tf.train.Int64List(value=[label]))
-            elif name == 'test':
-                features['candidates'] = tf.train.Feature(int64_list=tf.train.Int64List(value=last_item))
-                features['labels'] = tf.train.Feature(int64_list=tf.train.Int64List(value=label))
-            example = tf.train.Example(features=tf.train.Features(feature=features))
-            writer.write(example.SerializeToString())
-
-
-def parse_train(serial):
-    feature_description = {
-        'user_id': tf.FixedLenFeature(dtype=tf.int64, shape=[]),
-        'positive_items': tf.VarLenFeature(dtype=tf.int64),
-        'last_item': tf.FixedLenFeature(dtype=tf.int64, shape=[]),
-        'label': tf.FixedLenFeature(dtype=tf.int64, shape=[])
-    }
-    feats = tf.parse_single_example(serial, feature_description)
-    user_id = feats['user_id']
-    history_items = tf.sparse_tensor_to_dense(feats['positive_items'])
-    item = feats['last_item']
-    label = feats['label']
-    return user_id, history_items, item, label
-
-
-def parse_test(serial):
-    feature_description = {
-        'user_id': tf.FixedLenFeature(dtype=tf.int64, shape=[]),
-        'positive_items': tf.VarLenFeature(dtype=tf.int64),
-        'candidates': tf.VarLenFeature(dtype=tf.int64),
-        'labels': tf.VarLenFeature(dtype=tf.int64)
-    }
-    feats = tf.parse_single_example(serial, feature_description)
-    user_id = feats['user_id']
-    history_items = tf.sparse_tensor_to_dense(feats['positive_items'])
-    item = tf.sparse_tensor_to_dense(feats['candidates'])
-    label = tf.sparse_tensor_to_dense(feats['labels'])
-    return user_id, history_items, item, label
-
-
 if __name__ == '__main__':
     # pmf = PMF()
     # pmf.fit(load_rating_data(ml_100k + '/u.data'))
 
     # print(load_rating_seq()[1])
+    data = load_reward_seq()
+    train_data, test_data1, test_data2 = data_split([0.4, 0.3, 0.3], data)
 
-    # 允许tensor不在图内跑
-    tf.enable_eager_execution()
+    train_user, train_items, train_item, train_label = get_train_data(train_data)
+    test_user1, test_items1, test_item1, test_label1 = get_test_data((train_data, test_data1))
+    test_user2, test_items2, test_item2, test_label2 = get_test_data((train_data, test_data2))
 
-    # 生成训练时的TFRecord
-    # data = load_reward_seq()
-    # train_data, test_data = data_split([0.7, 0.3], data)
-    # to_TFRecord(data, name='train', filename='train.tfr')
-    # to_TFRecord((train_data, test_data), name='test', filename='test.tfr')
+    dataset = {}
 
-    # 解析训练时的TFRecord
-    filenames = ['test.tfr']
-    raw_dataset = tf.data.TFRecordDataset(filenames=filenames)
-    parsed_dataset = raw_dataset.map(parse_test)
-    batch = parsed_dataset.shuffle(100).padded_batch(1, padded_shapes=([], [None], [None], [None]))
-    for item in batch:
-        print(np.shape(item[0]))
-        print(np.shape(item[1]))
-        print(np.shape(item[2]))
-        print(np.shape(item[3]))
+    dataset['train_user'] = train_user
+    dataset['train_items'] = train_items
+    dataset['train_item'] = train_item
+    dataset['train_label'] = train_label
+
+    dataset['test_user1'] = test_user1
+    dataset['test_items1'] = test_items1
+    dataset['test_item1'] = test_item1
+    dataset['test_label1'] = test_label1
+
+    print(np.shape(test_user1), np.shape(test_items1), np.shape(test_item1), np.shape(test_label1))
+
+    dataset['test_user2'] = test_user2
+    dataset['test_items2'] = test_items2
+    dataset['test_item2'] = test_item2
+    dataset['test_label2'] = test_label2
+
+    with open('./data_3part.pkl', 'wb') as f:
+        pkl.dump(dataset, f)
 
 
 
