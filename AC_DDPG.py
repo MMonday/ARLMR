@@ -214,6 +214,7 @@ if __name__ == '__main__':
     target_AC = AC_net('target_AC')
     saver = tf.train.Saver()
     SESS.run(tf.global_variables_initializer())
+    target_AC.set_params(train_AC.a_params, train_AC.c_params, t=1)
 
     memory = Memory(5000, 2*N_S + N_A + 1)
     reward_list = []
@@ -238,7 +239,7 @@ if __name__ == '__main__':
                 q_ = target_AC.get_q(b_s_)
                 target_q = b_r + GAMMA * q_
                 train_AC.train(target_q, s=b_s)
-                target_AC.set_params(train_AC.a_params, train_AC.c_params, t=0.4)
+                target_AC.set_params(train_AC.a_params, train_AC.c_params, t=0.2)
         user_auc = 0
         for user in range(1, 944):
             items = env._find_latest_positive_history(user)

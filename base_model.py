@@ -6,20 +6,21 @@ import time
 from sklearn.metrics import roc_auc_score
 import numpy as np
 # from tensorflow.python import debug as dbg
+import matplotlib.pyplot as plt
 
 ML_100K = './dataset/ml-100k'
 
 class BaseModel(object):
     def __init__(self):
         pmf = PMF()
-        pmf.fit(load_rating_data(ML_100K + '/u.data'))
+        pmf.fit(np.load('./pmf_train.npy'))
         print('pretraining complete...')
         self.user_features = pmf.w_User
         self.dim = len(self.user_features[0])
         self.user_features[0] = np.array([0.0 for _ in range(self.dim)])
         self.item_features = pmf.w_Item
         self.item_features[0] = np.array([0.0 for _ in range(self.dim)])
-        self.lr = 0.0005
+        self.lr = 0.0001
         self.max_epoch = 100
         self.batch_size = 32
         self.load_data()
@@ -121,7 +122,7 @@ class BaseModel(object):
                                                                      self.label: self.train_label}))
             print('test_auc1:', self.auc(self.test_user1, self.test_items1, self.test_item1, self.test_label1))
             print('test_auc2:', self.auc(self.test_user2, self.test_items2, self.test_item2, self.test_label2))
-            aucs = []
+            loss, aucs1, aucs2 = [], [], []
             for epoch in range(self.max_epoch):
                 # 打乱训练数据顺序
                 train_data = list(zip(self.train_user, self.train_items, self.train_item, self.train_label))
@@ -143,14 +144,31 @@ class BaseModel(object):
                                                                      self.label: self.train_label})
                     test_auc1 = self.auc(self.test_user1, self.test_items1, self.test_item1, self.test_label1)
                     test_auc2 = self.auc(self.test_user2, self.test_items2, self.test_item2, self.test_label2)
-                    if (len(aucs) > 3) and (test_auc1 < aucs[-1] < aucs[-2]):
+                    loss.append(train_loss)
+                    aucs1.append(test_auc1)
+                    aucs2.append(test_auc2)
+                    if (len(aucs1) > 3) and (aucs1[-1] < aucs1[-2] < aucs1[-3]):
                         print('early stop.')
                         break
-                    aucs.append(test_auc1)
                     print('train_loss:{}    test_auc1:{}    test_auc2:{}'.format(train_loss, test_auc1, test_auc2))
+        return loss, aucs1, aucs2
 
 if __name__ == '__main__':
     m = BaseModel()
-    m.train()
+    loss, aucs1, aucs2 = m.train()
+    epochs = len(loss)
+    plt.subplot(2, 2, 1)
+    plt.plot(np.arange(epochs), loss)
+    plt.xlabel('epoch')
+    plt.ylabel('train_loss')
+    plt.subplot(2, 2, 3)
+    plt.plot(np.arange(epochs), aucs1)
+    plt.xlabel('epoch')
+    plt.ylabel('valid_auc')
+    plt.subplot(2, 2, 4)
+    plt.plot(np.arange(epochs), aucs2)
+    plt.xlabel('epoch')
+    plt.ylabel('test_auc')
+    plt.show()
 
 

@@ -35,7 +35,7 @@ class PMF(object):
 
         # 1-p-i, 2-m-c
         num_user = int(np.amax(train_vec[:, 0])) + 1  # 第0列，user总数
-        num_item = int(np.amax(train_vec[:, 1])) + 1  # 第1列，movie总数
+        num_item = 1682 + 1  # 第1列，movie总数
 
         incremental = False  # 增量
         if (not incremental) or (self.w_Item is None):
@@ -143,6 +143,12 @@ def to_reward(rating):
         return 0
     return -1
 
+def reward_to_label(reward):
+    if reward == 1:
+        return 1
+    else:
+        return 0
+
 
 def load_reward_seq(file_path=ml_100k + '/u.data'):
     sequential_history = dict()  # {user: {item: reward}}
@@ -157,6 +163,13 @@ def load_reward_seq(file_path=ml_100k + '/u.data'):
             sequential_history.setdefault(record[0], OrderedDict())[record[1]] = to_reward(record[2])
     return sequential_history
 
+# record form: {user{item: rating}}, list form: [user, item, rating]
+def record_to_list(data):
+    l = []
+    for user in data:
+        for item in data[user]:
+            l.append([user, item, reward_to_label(data[user][item])])
+    return l
 
 # 生成器，用来产生tf.data.Dataset
 def get_train_data(data):
@@ -228,6 +241,8 @@ if __name__ == '__main__':
     # print(load_rating_seq()[1])
     data = load_reward_seq()
     train_data, test_data1, test_data2 = data_split([0.4, 0.3, 0.3], data)
+
+    np.save('./pmf_train.npy', record_to_list(train_data))
 
     train_user, train_items, train_item, train_label = get_train_data(train_data)
     test_user1, test_items1, test_item1, test_label1 = get_test_data((train_data, test_data1))

@@ -28,7 +28,7 @@ class Environment(object):
         self.user_id = 0
         self.bad_user = []   # 没有正评价的消极用户
         pmf = PMF()
-        pmf.fit(load_rating_data(ml_100k + '/u.data'))
+        pmf.fit(np.load('./pmf_train.npy'))
         print('training complete...')
         self.user_features = pmf.w_User  # 预训练用户表示， 100维
         self.item_features = pmf.w_Item  # 预训练电影表示， 100维
