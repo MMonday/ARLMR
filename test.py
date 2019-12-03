@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pickle as pkl
 import random
+import pandas as pd
+from ML100k_processing import load_rating_data
 
 # replot
 # MAX_EPOCH = 100
@@ -41,13 +43,11 @@ import random
 # while 1:
 #     print(next(a))
 
-def add_noise_by_chance(s, e):
-    shape0, shape1 = list(np.shape(s))
-    noise = np.random.randn(shape0, shape1)
-    r = random.random()
-    if r < e:
-        return s + noise
-    else:
-        return s
-
-print(add_noise_by_chance([[1, 2, 3, 4]], 0.5))
+a = [1, 2, 3]
+plt.plot(a, color='r', label='red')
+plt.plot([3] * 3, color='g', label='green')
+plt.plot([np.mean(a)] * 3, color='r', label='average', linestyle='-.')
+plt.xlabel('epoch')
+plt.ylabel('auc')
+plt.legend()
+plt.show()

@@ -7,7 +7,7 @@ Creating a environment in recommendation systems.
 """
 
 from ML100k_processing import PMF
-from ML100k_processing import load_rating_data, load_reward_seq
+from ML100k_processing import load_rating_data, load_reward_seq, data_split
 from sklearn.metrics import roc_auc_score
 import numpy as np
 import random
@@ -33,28 +33,22 @@ class Environment(object):
         self.user_features = pmf.w_User  # 预训练用户表示， 100维
         self.item_features = pmf.w_Item  # 预训练电影表示， 100维
         self.user_record = load_reward_seq()  # 用户日志： 形如{user: {item, reward}}
-        self.user_history = {k: v for k, v in zip(range(1, 944), self._init_positive_history())}  # 所有用户的历史观影记录，形如{user: [movie_ids]}
+        self.user_history = {k: v for k, v in self._init_history()}  # 开始训练时每个用户的历史记录，形如{user: [movie_ids]}
+        self.state = {}
+        for user in range(1, 944):
+            self.set_state(user, self.state_encode(user, self._find_positive_history(user)))
 
-    def _init_positive_history(self):
+    def _init_history(self):
         """
         选取用户日志中的最初n个正项目，初始化每个用户的历史。
 
         :yield: 每个用户的初始历史
         """
+        train_data, _ = data_split([0.4, 0.6], self.user_record)
         for user in range(1, 944):
-            history = []
-            for item in self.user_record[user]:
-                if self.user_record[user][item] == 1:
-                    history.append(item)
-                if len(history) == self.state_window_size:
-                    yield history
-                    break
-            if len(history) < 5:
-                self.bad_user.append(user)
-                yield history
-        return None
+            yield user, list(train_data[user].keys())
 
-    def _find_latest_positive_history(self, user_id):
+    def _find_positive_history(self, user_id):
         """
         :param record: 用户日志。class OrderedDict: {item: reward}.
         :param history: 当前用户此刻的所有历史。
@@ -62,9 +56,7 @@ class Environment(object):
         """
         record, history = self.user_record[user_id], self.user_history[user_id]
         positive_history = [item for item in history if record[item] == 1]
-        if len(positive_history) <= 5:
-            return positive_history
-        return [item for item in history if record[item] == 1][-5:]
+        return positive_history
 
     def _find_candidate(self, user):
         """
@@ -91,6 +83,9 @@ class Environment(object):
                                 item_ave], axis=0)
         return state
 
+    def set_state(self, user, s):
+        self.state[user] = s
+
     def get_reward(self, user, item):
         """
         :param user: 当前用户。
@@ -110,31 +105,33 @@ class Environment(object):
         self.user_id = random.choice(range(1, 944))
         while self.user_id in self.bad_user:
             self.user_id = random.choice(range(1, 944))
-        self.user_history = {k: v for k, v in zip(range(1, 944), self._init_positive_history())}
+        self.user_history = {k: v for k, v in self._init_history()}
         items = self.user_history[self.user_id]
-        self.state = self.state_encode(self.user_id, items)
-        return self.state
+        s_ = self.state_encode(self.user_id, items)
+        return s_
 
-    def step(self, action):
+    def step(self, user, action):
         """
         对当前用户做出推荐，用户到达新状态，并得到奖励。
 
         :param action: 动作向量，根据此做出推荐。
         :return: 下一步状态, 奖励, 是否结束, 日志记录.
         """
-        candidates = self._find_candidate(self.user_id)
+        end = False
+        candidates = self._find_candidate(user)
         candidate_mat = [self.item_features[i] for i in candidates]
-        ratings = list(np.matmul(candidate_mat, np.transpose(action)))
+        ratings = np.matmul(candidate_mat, np.transpose(action)).reshape(-1).tolist()
         recommend_item = candidates[ratings.index(max(ratings))]
-        reward = self.get_reward(self.user_id, recommend_item)
+        reward = self.get_reward(user, recommend_item)
+        self.user_history[user].append(recommend_item)
         if reward > 0:
-            self.user_history[self.user_id].append(recommend_item)
             info = 'recommendation success'
         else:
             info = 'recommendation fail'
-        pos_items = self._find_latest_positive_history(self.user_id)
-        state = self.state_encode(self.user_id, pos_items)
-        end = not bool(candidates)
+        pos_items = self._find_positive_history(user)
+        state = self.state_encode(user, pos_items)
+        if len(candidates) == 1:
+            end = True
         return state, reward, end, info
 
     def auc(self, user, action):
@@ -147,9 +144,17 @@ class Environment(object):
         candidate = self._find_candidate(user)
         candidate_mat = [self.item_features[i] for i in candidate]
         labels = [1 if self.user_record[user][i] > 0 else 0 for i in candidate]
-        ratings = list(np.matmul(candidate_mat, np.transpose(action)))
-        p = list(map(lambda x: 1 / (1 + np.e ** (-x)), ratings))
-        return roc_auc_score(labels, p)
+        ratings = np.matmul(candidate_mat, np.transpose(action)).reshape(-1).tolist()
+        all_label_is = -1
+        try:
+            auc = roc_auc_score(labels, ratings)
+        except ValueError:
+            auc = -1
+            if 0 not in labels:
+                all_label_is = 1
+            if 1 not in labels:
+                all_label_is = 0
+        return all_label_is, auc
 
 
 if __name__ == '__main__':

@@ -139,8 +139,6 @@ def load_rating_data(file_path=ml_100k + '/u.data'):
 def to_reward(rating):
     if rating == 4 or rating == 5:
         return 1
-    if rating == 3:
-        return 0
     return -1
 
 def reward_to_label(reward):

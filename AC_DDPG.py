@@ -19,11 +19,11 @@ import random
 
 
 MAX_STEP = 25  # max step in one epoch 80% people have positive items over 42,90% people have positive item over 25
-MAX_EPOCH = 100   # max epoch number
-BATCH_SIZE = 64
-STATE_WINDOW_SIZE = 5
-GAMMA = 0.9    # account rate
-LR_A = 0.0001    # learning rate for actor
+MAX_EPOCH = 1000   # max epoch number
+BATCH_SIZE = 128
+# STATE_WINDOW_SIZE = 5
+GAMMA = 0.8    # account rate
+LR_A = 0.001    # learning rate for actor
 LR_C = 0.001    # learning rate for critic
 E_GREEDY = 0.1
 REPLAY_BUFFER = []
@@ -57,7 +57,7 @@ class AC_net(object):
         with tf.variable_scope(scope):
             self.s = tf.placeholder(tf.float32, [None, N_S], 'S')
             self.target_q = tf.placeholder(tf.float32, [None, 1], 'target_q')
-            self.action, self.q_value, self.a_params, self.c_params = self._build_net(scope)
+            self._build_net(scope)
 
             with tf.name_scope('update_c'):
                 reg_set_c = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES, scope=scope + '/critic')
@@ -70,7 +70,7 @@ class AC_net(object):
                 reg_set_a = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES, scope=scope + '/critic')
                 l2_loss_a = tf.add_n(reg_set_a) / BATCH_SIZE
                 policy_grads = tf.gradients(ys=self.action, xs=self.a_params,
-                                            grad_ys=tf.gradients((self.q_value - l2_loss_a), self.action))
+                                            grad_ys=tf.gradients(-self.q_value + l2_loss_a, self.action))
                 self.update_a = OPT_A.apply_gradients(zip(policy_grads, self.a_params))
 
     def _build_net(self, scope):
@@ -93,21 +93,20 @@ class AC_net(object):
                                          kernel_initializer=w_init, kernel_regularizer=l2, name='first_relu')
             second_relu = tf.layers.dense(first_relu, 200, tf.nn.relu,
                                           kernel_initializer=w_init, kernel_regularizer=l2, name='second_relu')
-            action = tf.layers.dense(second_relu, 100, tf.nn.tanh,
+            self.action = tf.layers.dense(second_relu, 100, tf.nn.tanh,
                                      kernel_initializer=w_init, kernel_regularizer=l2, name='action')
         with tf.variable_scope('critic'):
             state_map = tf.layers.dense(self.s, 100, tf.nn.relu,
                                         kernel_initializer=w_init, kernel_regularizer=l2, name='state_map')
-            critic_input = tf.concat([action, state_map], 1)
+            critic_input = tf.concat([self.action, state_map], 1)
             first_relu = tf.layers.dense(critic_input, 100, tf.nn.relu,
                                          kernel_initializer=w_init, kernel_regularizer=l2, name='first_relu')
             second_relu = tf.layers.dense(first_relu, 20, tf.nn.relu,
                                           kernel_initializer=w_init, kernel_regularizer=l2, name='second_relu')
-            q_value = tf.layers.dense(second_relu, 1,
+            self.q_value = tf.layers.dense(second_relu, 1,
                                       kernel_initializer=w_init, kernel_regularizer=l2, name='q_value')
-        a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/actor')
-        c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/critic')
-        return action, q_value, a_params, c_params
+        self.a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/actor')
+        self.c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/critic')
 
     def train(self, target_q, s):
         """
@@ -117,7 +116,8 @@ class AC_net(object):
             target_q: Output of target Critic.
             s: Current state.
         """
-        SESS.run([self.update_a, self.update_c], feed_dict={self.s: s, self.target_q:target_q})
+        SESS.run([self.update_a, self.update_c], feed_dict={self.s: s,
+                                                            self.target_q: target_q})
 
     def set_params(self, a_params, c_params, t):
         """
@@ -208,60 +208,101 @@ class Memory(object):
 
 if __name__ == '__main__':
     SESS = tf.Session()
-    OPT_A = tf.train.AdamOptimizer(-LR_A)
+    OPT_A = tf.train.AdamOptimizer(LR_A)
     OPT_C = tf.train.AdamOptimizer(LR_C)
     train_AC = AC_net('train_AC')
     target_AC = AC_net('target_AC')
     saver = tf.train.Saver()
     SESS.run(tf.global_variables_initializer())
-    target_AC.set_params(train_AC.a_params, train_AC.c_params, t=1)
+    target_AC.set_params(train_AC.a_params, train_AC.c_params, t=0.2)
 
-    memory = Memory(5000, 2*N_S + N_A + 1)
+    memory = Memory(10000, 2*N_S + N_A + 1)
+
     reward_list = []
-    auc = []
+    aucs = []
+    all_neg_user_num = []
+    all_pos_user_num = []
+    end_user_num = []
+    valid_user_num = []
+    end_user = set()
+    neg_user = set()
+    pos_user = set()
+
     # For each user, recommendation agent take a few action.
-    for epoch in range(MAX_EPOCH):
-        env.reset()
-        reward = 0  # Sum reward for each epoch.
-        end = False
-        for step in range(MAX_STEP):    # is it fixed?
-            if not end:
-                s = env.state
+    for step in range(MAX_EPOCH):
+        # env.reset()
+        reward = 0  # average reward for each epoch.
+        # 和每一个用户交互
+        for user in range(1, 944):
+            if (user not in end_user) and (user not in pos_user) and (user not in neg_user):
+                s = env.state[user]
                 a = train_AC.get_action(s)
                 e = random.random()
                 if e < E_GREEDY:
                     noise = np.random.randn(1, N_A)
                     a = np.add(a, noise)
-                s_, r, end, info = env.step(a)
+                s_, r, end, info = env.step(user, a)
+                if end:
+                    end_user.add(user)
+                env.set_state(user, s_)
                 reward += r
                 memory.store_transition(s, a, r, s_)
-                b_s, b_a, b_r, b_s_ = memory.sample(BATCH_SIZE)
-                q_ = target_AC.get_q(b_s_)
-                target_q = b_r + GAMMA * q_
-                train_AC.train(target_q, s=b_s)
-                target_AC.set_params(train_AC.a_params, train_AC.c_params, t=0.2)
+        # 网络训练和参数更新
+        b_s, b_a, b_r, b_s_ = memory.sample(BATCH_SIZE)
+        q_ = target_AC.get_q(b_s_)
+        target_q = b_r + GAMMA * q_
+        train_AC.train(target_q, s=b_s)
+        target_AC.set_params(train_AC.a_params, train_AC.c_params, t=0.2)
+        # 统计用户的指标
         user_auc = 0
         for user in range(1, 944):
-            items = env._find_latest_positive_history(user)
-            s = env.state_encode(user, items)
-            a = train_AC.get_action(s)
-            try:
-                user_auc += env.auc(user, a)
-            except ValueError:
-                user_auc += 1
-        auc.append(user_auc / 943)
-        reward_list.append(reward)
-        print('epoch {} finished with reward {}, auc {}'.format(epoch, reward, user_auc / 943))
-    with open('./one_user_per_epoch.txt', 'w') as f:
-        f.write('{}\n{}\n{}\n'.format(list(range(MAX_EPOCH)), reward_list, auc))
-    plt.subplot(1, 2, 1)
-    plt.plot(np.arange(MAX_EPOCH), reward_list)
-    plt.xlabel('epoch')
-    plt.ylabel('reward')
-    plt.subplot(1, 2, 2)
-    plt.plot(np.arange(MAX_EPOCH), auc)
-    plt.xlabel('epoch')
+            if user not in end_user:
+                items = env._find_positive_history(user)
+                s = env.state[user]
+                a = train_AC.get_action(s)
+                all_label_is, auc = env.auc(user, a)
+                if auc >= 0:
+                    user_auc += auc
+                elif all_label_is == 0:
+                    neg_user.add(user)
+                else:
+                    pos_user.add(user)
+        if 943 - len(end_user) - len(neg_user) - len(pos_user) == 0:
+            break
+        # 记录各项指标
+        all_neg_user_num.append(len(neg_user))
+        all_pos_user_num.append(len(pos_user))
+        end_user_num.append(len(end_user))
+        valid_user_num.append(943 - len(end_user) - len(neg_user) - len(pos_user))
+        actual_auc = user_auc / (943 - len(end_user) - len(neg_user) - len(pos_user))
+        aucs.append(actual_auc)
+        average_reward = reward / (943 - len(end_user))
+        reward_list.append(average_reward)
+        print('step {} finished with average reward {}, auc {}'.format(step, average_reward, actual_auc))
+    # 画图
+    epoch_num = len(aucs)
+    # 奖励图
+    plt.subplot(2, 2, 1)
+    plt.plot(reward_list)
+    plt.xlabel('step')
+    plt.ylabel('average reward')
+    # auc对比图
+    plt.subplot(2, 2, 2)
+    plt.plot(aucs, color='r', label='auc')
+    plt.plot([0.5839] * epoch_num, color='g', label='auc without reinforcement learning')
+    plt.plot([np.mean(aucs)] * epoch_num, color='r', label='average auc', linestyle='-.')
+    plt.xlabel('step')
     plt.ylabel('auc')
+    plt.legend()
+    # 各类用户数目图
+    plt.subplot(2, 2, 3)
+    plt.plot(end_user_num, color='r', label='end_user_num')
+    plt.plot(all_pos_user_num, color='b', label='all_pos_user_num')
+    plt.plot(all_neg_user_num, color='b', label='all_neg_user_num', linestyle='-.')
+    plt.plot(valid_user_num, color='g', label='valid_user_num')
+    plt.xlabel('step')
+    plt.ylabel('user_num')
+    plt.legend()
     plt.show()
     saver.save(SESS, "/home/mondaym/PycharmProjects/AC_Rec/AC.ckpt")
     SESS.close()
