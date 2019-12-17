@@ -1,8 +1,6 @@
 import numpy as np
 from collections import OrderedDict
 import pickle as pkl
-import tensorflow as tf
-import IPython.display as display
 
 
 

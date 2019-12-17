@@ -20,11 +20,11 @@ import random
 
 MAX_STEP = 25  # max step in one epoch 80% people have positive items over 42,90% people have positive item over 25
 MAX_EPOCH = 1000   # max epoch number
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 # STATE_WINDOW_SIZE = 5
 GAMMA = 0.8    # account rate
-LR_A = 0.001    # learning rate for actor
-LR_C = 0.001    # learning rate for critic
+LR_A = 0.0025    # learning rate for actor
+LR_C = 0.0025   # learning rate for critic
 E_GREEDY = 0.1
 REPLAY_BUFFER = []
 

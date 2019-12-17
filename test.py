@@ -1,8 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import pickle as pkl
-import random
-import pandas as pd
+import tensorflow as tf
+from heapq import nlargest
+
+# import pickle as pkl
+# import random
+# import pandas as pd
 from ML100k_processing import load_rating_data
 
 # replot
@@ -43,11 +46,15 @@ from ML100k_processing import load_rating_data
 # while 1:
 #     print(next(a))
 
-a = [1, 2, 3]
-plt.plot(a, color='r', label='red')
-plt.plot([3] * 3, color='g', label='green')
-plt.plot([np.mean(a)] * 3, color='r', label='average', linestyle='-.')
-plt.xlabel('epoch')
-plt.ylabel('auc')
-plt.legend()
-plt.show()
+# a = [1, 2, 3]
+# plt.plot(a, color='r', label='red')
+# plt.plot([3] * 3, color='g', label='green')
+# plt.plot([np.mean(a)] * 3, color='r', label='average', linestyle='-.')
+# plt.xlabel('epoch')
+# plt.ylabel('auc')
+# plt.legend()
+# plt.show()
+
+ratings = [0.4, 0.2, 0.9, 0.7, 0.1]
+items = [1, 2, 3, 4, 5]
+print(nlargest(3, items, key=lambda x: ratings[items.index(x)]))

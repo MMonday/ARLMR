@@ -9,6 +9,7 @@ Creating a environment in recommendation systems.
 from ML100k_processing import PMF
 from ML100k_processing import load_rating_data, load_reward_seq, data_split
 from sklearn.metrics import roc_auc_score
+from heapq import nlargest
 import numpy as np
 import random
 
@@ -32,7 +33,11 @@ class Environment(object):
         print('training complete...')
         self.user_features = pmf.w_User  # 预训练用户表示， 100维
         self.item_features = pmf.w_Item  # 预训练电影表示， 100维
+        self.item_num = len(self.item_features) - 1
+        self.user_num = len(self.user_features) - 1
+        self.top_n = 1
         self.user_record = load_reward_seq()  # 用户日志： 形如{user: {item, reward}}
+        # 包括被推荐的历史和交互的历史
         self.user_history = {k: v for k, v in self._init_history()}  # 开始训练时每个用户的历史记录，形如{user: [movie_ids]}
         self.state = {}
         for user in range(1, 944):
@@ -55,15 +60,18 @@ class Environment(object):
         :return: 当前用户此刻的最近5个正历史，如果不足的话，把所有的正历史都算上。
         """
         record, history = self.user_record[user_id], self.user_history[user_id]
-        positive_history = [item for item in history if record[item] == 1]
+        positive_history = [item for item in history if item in record and record[item] == 1]
         return positive_history
 
     def _find_candidate(self, user):
         """
         :param user: 当前用户id。
-        :return: 候选电影 = 用户日志中的电影 - 已被推荐过的电影
+        :return: 候选电影 = 所有电影 - 已被推荐过的电影
         """
-        return [item for item in self.user_record[user] if item not in self.user_history[user]]
+        return [item for item in range(1, self.item_num + 1) if item not in self.user_history[user]]
+
+    def rated_items(self, user, items):
+        return [item for item in items if item in self.user_record[user]]
 
     def state_encode(self, user, items):
         """
@@ -86,13 +94,17 @@ class Environment(object):
     def set_state(self, user, s):
         self.state[user] = s
 
-    def get_reward(self, user, item):
+    def get_reward(self, user, items):
         """
         :param user: 当前用户。
         :param item: 被推荐的电影。
         :return: 得到的奖励。
         """
-        return self.user_record[user][item]
+        total_reward = 0
+        for item in items:
+            if item in self.user_record[user]:
+                total_reward += self.user_record[user][item]
+        return total_reward
 
     def reset(self):
         """
@@ -121,9 +133,9 @@ class Environment(object):
         candidates = self._find_candidate(user)
         candidate_mat = [self.item_features[i] for i in candidates]
         ratings = np.matmul(candidate_mat, np.transpose(action)).reshape(-1).tolist()
-        recommend_item = candidates[ratings.index(max(ratings))]
-        reward = self.get_reward(user, recommend_item)
-        self.user_history[user].append(recommend_item)
+        recommend_items = nlargest(self.top_n, candidates, key=lambda x: ratings[candidates.index(x)])
+        reward = self.get_reward(user, recommend_items)
+        self.user_history[user] += recommend_items
         if reward > 0:
             info = 'recommendation success'
         else:
@@ -141,7 +153,9 @@ class Environment(object):
         :param action: 对该用户做出的动作。
         :return: 该用户的auc。
         """
-        candidate = self._find_candidate(user)
+        candidate = self.rated_items(user, self._find_candidate(user))
+        if len(candidate) <= 1:
+            return 0, -1
         candidate_mat = [self.item_features[i] for i in candidate]
         labels = [1 if self.user_record[user][i] > 0 else 0 for i in candidate]
         ratings = np.matmul(candidate_mat, np.transpose(action)).reshape(-1).tolist()
